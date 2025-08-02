@@ -71,6 +71,9 @@ Never include any confirmation message and only send back the translated text.
     }
 }
 
+# key = f"chat:{chat.uid}:{chat.language}"
+# raw_messages = client.lrange(key, 0, -1)
+
 # Create models if they don't already exist
 for model_name, config in models.items():
     try:
@@ -102,13 +105,16 @@ class Translate(BaseModel):
 class UserModel(BaseModel):
     uid: str
     model_uid: str
+    model_info: str
+
+class User(BaseModel):
+    uid: str
 
 @app.post("/chat")
 def get_chat_response(chat: Chat):
   print(chat.language)
   global client
-  key = f"chat:{chat.uid}:{chat.language}"
-  print(chat.uid)
+  key = f"chat:{chat.uid}:log:{chat.language}"
   raw_messages = client.lrange(key, 0, -1)
 
   # Parse JSON
@@ -124,7 +130,7 @@ def get_chat_response(chat: Chat):
 
   user_msg = {'role': 'user', 'content': chat.message}
   assistant_msg = {'role': 'assistant', 'content': response.message.content}
-  key = f"chat:{chat.uid}:{chat.language}"
+  key = f"chat:{chat.uid}:log:{chat.language}"
 
   user_json_str = json.dumps(user_msg)
   print(user_json_str)
@@ -146,10 +152,24 @@ def get_translation(translate: Translate):
 
     return {"translatedText": response.message.content}
 
-@app.get("/log")
-def get_log(userModel: UserModel):
-    key = f"chat:{userModel.uid}:{userModel.model_uid}"
-    raw_messages = client.lrange(key, 0, -1)
-    parsed_messages = [json.loads(msg) for msg in raw_messages]
+@app.post("/add-model")
+def add_model(userModel: UserModel):
+    key = f"model:{userModel.uid}:{userModel.model_uid}"
+    client.rpush(key, userModel.model_info)
+    print(userModel.model_info)
+    print(userModel.model_uid)
+    print(userModel.uid)
+    userModelJson = json.loads(userModel.model_info)
+    
+    ollama.create(
+        model=userModel.model_uid,
+        from_='gemma3',
+        system=f'You are {userModelJson["title"]}. {userModelJson["description"]}'
+    )
+    return {"response": "Success"}
 
-    return {"parsedMessages": parsed_messages}
+@app.post("/fetch")
+def fetch_models(user: User):
+    keys = client.keys(f"model:{user.uid}:*")
+    models = [json.loads(client.lrange(key, 0, -1)[0]) for key in keys]
+    return {"models": models}
